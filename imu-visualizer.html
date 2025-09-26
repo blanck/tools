@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D IMU Board Simulator</title>
+    <!-- Tailwind CSS CDN for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Three.js CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <style>
+        /* The canvas container ensures the 3D scene fills the wrapper */
+        #container {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            cursor: grab; /* Visual cue for dragging */
+        }
+        #container:active {
+            cursor: grabbing;
+        }
+        canvas {
+            display: block;
+            /* Ensure the canvas itself respects the border radius of its parent */
+            border-radius: inherit; 
+        }
+        
+        /* Custom slider track colors (Thinner and fully rounded tracks achieved via Tailwind classes h-1 and rounded-full) */
+        .slider-roll::-webkit-slider-runnable-track { background: #fca5a5; border-radius: 9999px; } /* Roll (Z) is RED */
+        .slider-pitch::-webkit-slider-runnable-track { background: #bfdbfe; border-radius: 9999px; } /* Pitch (X) is BLUE */
+        .slider-yaw::-webkit-slider-runnable-track { background: #bbf7d0; border-radius: 9999px; } /* Yaw (Y) is GREEN */
+        
+        .slider-roll::-moz-range-track { background: #fca5a5; border-radius: 9999px; }
+        .slider-pitch::-moz-range-track { background: #bfdbfe; border-radius: 9999px; }
+        .slider-yaw::-moz-range-track { background: #bbf7d0; border-radius: 9999px; }
+
+        /* Ensure thumb styling is maintained and perfectly centered on the 4px track */
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: #2b2b2bdd;
+            cursor: pointer;
+            margin-top: -5px; /* Centers 16px thumb on 4px track (Webkit) */
+            margin-bottom: -4px;
+            box-shadow: 0 0 2px rgba(0, 0, 0, 0.2);
+        }
+        
+        input[type="range"]::-moz-range-thumb {
+            height: 16px; /* Standardized size to 16px */
+            width: 16px; /* Standardized size to 16px */
+            border-radius: 50%;
+            background: #2b2b2bdd;
+            cursor: pointer;
+            border: none;
+            margin-top: -5px; /* Centers 16px thumb on 4px track (Firefox) */
+            margin-bottom: -4px;
+            box-shadow: 0 0 2px rgba(0, 0, 0, 0.2); /* Added for consistency */
+        }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans p-4 md:p-8 flex flex-col items-center min-h-screen">
+
+    <div class="max-w-4xl w-full">
+        <h1 class="text-3xl font-extrabold text-center text-gray-800">
+            IMU Orientation Visualizer
+        </h1>
+        <p class="text-md text-center mb-6 text-gray-500">
+            Visualize and control Roll, Pitch, and Yaw in a real-time 3D environment, complete with quaternion feedback.
+        </p>
+
+        <!-- FLEX ROW FOR 3D VIEW AND SLIDERS (Side-by-Side on Desktop) -->
+        <div class="flex flex-col md:flex-row gap-6 mb-6">
+            
+            <!-- 3D View (Canvas Container) - Takes 50% width on medium screens and up -->
+            <div class="w-full md:w-1/2 bg-white rounded-xl shadow-lg border border-gray-200 h-[40vh] min-h-[300px] flex items-center justify-center overflow-hidden">
+                <div id="container"></div>
+            </div>
+            
+            <!-- Axis Control Sliders - Takes 50% width on medium screens and up -->
+            <div class="w-full md:w-1/2">
+                <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-200 h-full">
+                    <h2 class="text-xl font-semibold mb-4 text-gray-700">Manual Axis Control (Degrees)</h2>
+                    <div class="space-y-4">
+                        
+                        <!-- Roll Slider (Z-Axis - RED) -->
+                        <div class="flex items-center space-x-4">
+                            <!-- Increased width to w-28 to prevent wrapping -->
+                            <span class="font-medium text-red-600 w-28">Roll (Z)</span>
+                            <input type="range" id="slider-roll" min="-180" max="180" value="0" step="0.1" 
+                                class="w-full h-1 bg-gray-200 rounded-full appearance-none cursor-pointer slider-roll">
+                            <span id="slider-roll-value" class="w-12 text-sm text-gray-700 text-right">0.0°</span>
+                        </div>
+
+                        <!-- Pitch Slider (X-Axis - BLUE) -->
+                        <div class="flex items-center space-x-4">
+                            <!-- Increased width to w-28 to prevent wrapping -->
+                            <span class="font-medium text-blue-600 w-28">Pitch (X)</span>
+                            <input type="range" id="slider-pitch" min="-180" max="180" value="0" step="0.1" 
+                                class="w-full h-1 bg-gray-200 rounded-full appearance-none cursor-pointer slider-pitch">
+                            <span id="slider-pitch-value" class="w-12 text-sm text-gray-700 text-right">0.0°</span>
+                        </div>
+                        
+                        <!-- Yaw Slider (Y-Axis - GREEN) -->
+                        <div class="flex items-center space-x-4">
+                            <!-- Increased width to w-28 to prevent wrapping -->
+                            <span class="font-medium text-green-600 w-28">Yaw (Y)</span>
+                            <input type="range" id="slider-yaw" min="-180" max="180" value="0" step="0.1" 
+                                class="w-full h-1 bg-gray-200 rounded-full appearance-none cursor-pointer slider-yaw">
+                            <span id="slider-yaw-value" class="w-12 text-sm text-gray-700 text-right">0.0°</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Zero All Button (Smaller and Grey) -->
+                    <button id="zero-all-btn" class="mt-6 w-full py-1 text-sm bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold rounded-lg transition duration-150 shadow-sm">
+                        Zero All Rotation
+                    </button>
+                    
+                    <p class="mt-4 text-sm text-gray-500">
+                        Sliders provide precise control. Dragging the board overrides the rotation state.
+                    </p>
+                </div>
+            </div>
+        </div>
+
+
+        <!-- Orientation Values Display (Full Width) -->
+        <div class="bg-white p-6 rounded-xl shadow-lg border border-gray-200">
+            <h2 class="text-xl font-semibold mb-4 text-gray-700">Current Orientation Readout</h2>
+            
+            <!-- Euler Angles -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center mb-6">
+                <!-- Roll (Z-Axis) - RED -->
+                <div class="p-4 bg-red-50 border-l-4 border-red-500 rounded-lg">
+                    <p class="text-sm font-medium text-red-700">Roll (Z-Axis)</p>
+                    <p id="roll-value" class="text-3xl font-bold text-red-600">0.0°</p>
+                </div>
+                <!-- Pitch (X-Axis) - BLUE -->
+                <div class="p-4 bg-blue-50 border-l-4 border-blue-500 rounded-lg">
+                    <p class="text-sm font-medium text-blue-700">Pitch (X-Axis)</p>
+                    <p id="pitch-value" class="text-3xl font-bold text-blue-600">0.0°</p>
+                </div>
+                <!-- Yaw (Y-Axis) - GREEN -->
+                <div class="p-4 bg-green-50 border-l-4 border-green-500 rounded-lg">
+                    <p class="text-sm font-medium text-green-700">Yaw (Y-Axis)</p>
+                    <p id="yaw-value" class="text-3xl font-bold text-green-600">0.0°</p>
+                </div>
+            </div>
+            
+            <!-- Quaternions (W, X, Y, Z) - New Section -->
+            <h3 class="text-lg font-semibold mb-3 text-gray-700 border-t pt-4">Quaternion Values (W, X, Y, Z)</h3>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center">
+                <!-- W -->
+                <div class="p-3 bg-gray-50 border-l-4 border-gray-400 rounded-lg">
+                    <p class="text-xs font-medium text-gray-600">W</p>
+                    <p id="quat-w-value" class="text-xl font-bold text-gray-800">1.000</p>
+                </div>
+                <!-- X -->
+                <div class="p-3 bg-gray-50 border-l-4 border-gray-400 rounded-lg">
+                    <p class="text-xs font-medium text-gray-600">X (Pitch)</p>
+                    <p id="quat-x-value" class="text-xl font-bold text-gray-800">0.000</p>
+                </div>
+                <!-- Y -->
+                <div class="p-3 bg-gray-50 border-l-4 border-gray-400 rounded-lg">
+                    <p class="text-xs font-medium text-gray-600">Y (Yaw)</p>
+                    <p id="quat-y-value" class="text-xl font-bold text-gray-800">0.000</p>
+                </div>
+                <!-- Z -->
+                <div class="p-3 bg-gray-50 border-l-4 border-gray-400 rounded-lg">
+                    <p class="text-xs font-medium text-gray-600">Z (Roll)</p>
+                    <p id="quat-z-value" class="text-xl font-bold text-gray-800">0.000</p>
+                </div>
+            </div>
+
+            <p class="mt-4 text-sm text-gray-500">
+                The axes are visualized on the board (Roll: Red/Z, Pitch: Blue/X, Yaw: Green/Y).
+            </p>
+        </div>
+    </div>
+
+    <script>
+        // Three.js global variables
+        let scene, camera, renderer, imuBoard;
+        const container = document.getElementById('container');
+        
+        // Variables for drag rotation
+        let isDragging = false;
+        let previousMousePosition = { x: 0, y: 0 };
+        const rotationSpeed = 0.007; // Slower speed for smoother control
+
+        // Global variable to hold the stable rotation state (in radians).
+        // This decouples the stable slider input from the noisy quaternion conversion.
+        let stableRotation = { 
+            roll: 0, // Z-axis
+            pitch: 0, // X-axis
+            yaw: 0  // Y-axis
+        };
+        // Define the rotation order for applying stable Euler angles
+        const EULER_ORDER = 'ZXY'; // Lock occurs only when Pitch (X) hits +/- 90 degrees
+
+        /**
+         * Converts degrees to radians.
+         * @param {number} degrees Angle in degrees.
+         * @returns {number} Angle in radians.
+         */
+        const toRadians = (degrees) => degrees * (Math.PI / 180);
+
+        /**
+         * Resets all rotation axes (Roll, Pitch, Yaw) to zero.
+         */
+        function zeroAllRotation() {
+            // Reset stable state
+            stableRotation = { roll: 0, pitch: 0, yaw: 0 }; 
+            
+            // Apply stable state to the board
+            imuBoard.rotation.set(0, 0, 0);
+
+            // Reset all slider values and their associated text displays
+            const sliders = ['roll', 'pitch', 'yaw'];
+            sliders.forEach(axis => {
+                const degrees = 0.0;
+                document.getElementById(`slider-${axis}`).value = degrees.toFixed(1);
+                document.getElementById(`slider-${axis}-value`).textContent = `${degrees.toFixed(1)}°`;
+            });
+            // The animate loop will handle updating the main readout immediately after the next frame.
+        }
+
+        /**
+         * Initializes the Three.js scene, camera, renderer, and the IMU board model.
+         */
+        function init() {
+            // 1. Scene Setup
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xffffff); 
+
+            // 2. Camera Setup (Perspective Camera)
+            camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 0.1, 100);
+            // Camera position zoomed in
+            camera.position.set(5.6, 4.2, 8.4); 
+            camera.lookAt(scene.position);
+
+            // 3. Renderer Setup
+            renderer = new THREE.WebGLRenderer({ 
+                antialias: true // Anti-aliasing helps smooth edges
+            });
+            // This ensures the renderer uses the correct resolution for high-DPI screens.
+            renderer.setPixelRatio(window.devicePixelRatio); 
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            container.appendChild(renderer.domElement);
+
+            // 4. Lighting
+            const ambientLight = new THREE.AmbientLight(0x404040); 
+            scene.add(ambientLight);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(5, 5, 5).normalize();
+            scene.add(directionalLight);
+
+            // 5. IMU Board Model (Dimensions: X=4.0 wide, Y=0.1 thick, Z=7 deep/long)
+            const boardWidth = 4.0;
+            const boardThickness = 0.1;
+            const boardDepth = 5.6;
+
+            const geometry = new THREE.BoxGeometry(boardWidth, boardThickness, boardDepth);
+            
+            // Mesh for the transparent body of the board (50% opacity)
+            const bodyMaterial = new THREE.MeshPhongMaterial({ 
+                color: 0x102050,
+                shininess: 90,
+                transparent: true,
+                opacity: 0.5
+            }); 
+            imuBoard = new THREE.Mesh(geometry, bodyMaterial);
+            scene.add(imuBoard);
+
+            // Wireframe overlay
+            const wireframeMaterial = new THREE.MeshBasicMaterial({
+                color: 0x333333, 
+                wireframe: true,
+                transparent: true,
+                opacity: 0.1
+            });
+            const wireframeMesh = new THREE.Mesh(geometry, wireframeMaterial);
+            imuBoard.add(wireframeMesh);
+
+            // 6. Coordinate Frame Helpers
+            const origin = new THREE.Vector3(0, 0, 0);
+            // Removed the redundant default THREE.AxesHelper(3) as we use custom arrows below
+
+            // Custom ArrowHelper (thick lines with arrowheads) - Parameters adjusted for thicker visual
+            const arrowLength = 3.7; // Increased length for visibility
+            const headLength = 0.7; // Increased head size (thickness)
+            const headWidth = 0.55; // Increased head width (thickness)
+            
+            // --- X-Axis (Pitch Axis) - BLUE ---
+            const dirX = new THREE.Vector3(1, 0, 0);
+            const hexX = 0x0000ff; // Pitch is BLUE
+            const arrowX = new THREE.ArrowHelper(dirX, origin, arrowLength, hexX, headLength, headWidth);
+            imuBoard.add(arrowX);
+            
+            // --- Y-Axis (Yaw Axis) - GREEN ---
+            const dirY = new THREE.Vector3(0, 1, 0);
+            const hexY = 0x00ff00; // Yaw is GREEN
+            const arrowY = new THREE.ArrowHelper(dirY, origin, arrowLength, hexY, headLength, headWidth);
+            imuBoard.add(arrowY);
+            
+            // --- Z-Axis (Roll Axis) - RED ---
+            const dirZ = new THREE.Vector3(0, 0, 1);
+            const hexZ = 0xff0000; // Roll is RED
+            const arrowZ = new THREE.ArrowHelper(dirZ, origin, arrowLength, hexZ, headLength, headWidth);
+            imuBoard.add(arrowZ);
+
+            // 7. Event Listeners
+            window.addEventListener('resize', onWindowResize, false);
+            const canvas = renderer.domElement;
+            canvas.addEventListener('mousedown', onPointerDown, false);
+            canvas.addEventListener('mousemove', onPointerMove, false);
+            canvas.addEventListener('mouseup', onPointerUp, false);
+            canvas.addEventListener('mouseleave', onPointerUp, false); 
+            
+            // Touch events for mobile
+            canvas.addEventListener('touchstart', (e) => onPointerDown(e.touches[0]), false);
+            canvas.addEventListener('touchmove', (e) => onPointerMove(e.touches[0]), false);
+            canvas.addEventListener('touchend', onPointerUp, false);
+
+            // Slider Event Listeners (Removed 'axis' argument, using ID lookup now)
+            document.getElementById('slider-roll').addEventListener('input', (e) => handleSliderChange(e.target));
+            document.getElementById('slider-pitch').addEventListener('input', (e) => handleSliderChange(e.target));
+            document.getElementById('slider-yaw').addEventListener('input', (e) => handleSliderChange(e.target));
+
+            // Zero All Button Listener
+            document.getElementById('zero-all-btn').addEventListener('click', zeroAllRotation);
+        }
+        
+        /**
+         * Handles updates from the rotation sliders, storing the precise value in stableRotation
+         * and applying it to the board using the 'ZXY' Euler order.
+         * @param {HTMLInputElement} slider The slider element.
+         */
+        function handleSliderChange(slider) {
+            const degrees = parseFloat(slider.value);
+            const radians = toRadians(degrees);
+
+            // Update stable rotation state (Roll=Z, Pitch=X, Yaw=Y)
+            if (slider.id === 'slider-roll') { // Roll maps to Z axis
+                stableRotation.roll = radians;
+            } else if (slider.id === 'slider-pitch') { // Pitch maps to X axis
+                stableRotation.pitch = radians;
+            } else if (slider.id === 'slider-yaw') { // Yaw maps to Y axis
+                stableRotation.yaw = radians;
+            }
+            
+            // Apply the stable Euler angles to the board using the defined order.
+            // This ensures the board is set to the precise angles the user intended.
+            imuBoard.rotation.set(stableRotation.pitch, stableRotation.yaw, stableRotation.roll, EULER_ORDER);
+
+            // Update the auxiliary display value next to the slider using the stable value
+            document.getElementById(`${slider.id}-value`).textContent = `${degrees.toFixed(1)}°`;
+        }
+
+        /**
+         * Handles window resizing to keep the 3D visualization responsive.
+         */
+        function onWindowResize() {
+            const parent = renderer.domElement.parentElement; 
+            camera.aspect = parent.clientWidth / parent.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(parent.clientWidth, parent.clientHeight);
+        }
+
+        /**
+         * Starts the dragging state and records initial position.
+         */
+        function onPointerDown(e) {
+            isDragging = true;
+            const clientX = e.clientX !== undefined ? e.clientX : e.pageX;
+            const clientY = e.clientY !== undefined ? e.clientY : e.pageY;
+
+            previousMousePosition.x = clientX;
+            previousMousePosition.y = clientY;
+            container.style.cursor = 'grabbing';
+        }
+
+        /**
+         * Rotates the IMU board based on mouse/touch movement.
+         * Dragging maps directly to the Pitch (X) and Yaw (Y) axes for a familiar 3D control scheme.
+         */
+        function onPointerMove(e) {
+            if (!isDragging) return;
+
+            const clientX = e.clientX !== undefined ? e.clientX : e.pageX;
+            const clientY = e.clientY !== undefined ? e.clientY : e.pageY;
+            
+            const deltaX = clientX - previousMousePosition.x;
+            const deltaY = clientY - previousMousePosition.y;
+
+            // Vertical drag controls Pitch (X-axis rotation)
+            imuBoard.rotation.x += deltaY * rotationSpeed;
+            
+            // Horizontal drag controls Yaw (Y-axis rotation)
+            imuBoard.rotation.y += deltaX * rotationSpeed;
+            
+            previousMousePosition.x = clientX;
+            previousMousePosition.y = clientY;
+        }
+
+        /**
+         * Ends the dragging state.
+         */
+        function onPointerUp() {
+            isDragging = false;
+            container.style.cursor = 'grab';
+        }
+
+        /**
+         * Main animation loop. Updates the display values from the stable state.
+         */
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (isDragging) {
+                // When dragging, we read the current rotation from the board (which is stored as a quaternion)
+                // and convert it back to Euler angles using the defined order. This updates the stable state.
+                const euler = new THREE.Euler().setFromQuaternion(imuBoard.quaternion, EULER_ORDER);
+
+                // MAPPING: Roll=Z, Pitch=X, Yaw=Y
+                stableRotation.roll = euler.z;
+                stableRotation.pitch = euler.x;
+                stableRotation.yaw = euler.y;
+            }
+
+            // Convert stable state to degrees for all readouts/sliders
+            const rollDeg = (stableRotation.roll * 180 / Math.PI).toFixed(1);
+            const pitchDeg = (stableRotation.pitch * 180 / Math.PI).toFixed(1);
+            const yawDeg = (stableRotation.yaw * 180 / Math.PI).toFixed(1);
+
+            // Update HTML display readout (Euler Angles)
+            document.getElementById('roll-value').textContent = `${rollDeg}°`;
+            document.getElementById('pitch-value').textContent = `${pitchDeg}°`;
+            document.getElementById('yaw-value').textContent = `${yawDeg}°`;
+            
+            // Update HTML display readout (Quaternions)
+            const quat = imuBoard.quaternion;
+            document.getElementById('quat-w-value').textContent = quat.w.toFixed(3);
+            document.getElementById('quat-x-value').textContent = quat.x.toFixed(3);
+            document.getElementById('quat-y-value').textContent = quat.y.toFixed(3);
+            document.getElementById('quat-z-value').textContent = quat.z.toFixed(3);
+
+            // Update sliders (always reflect the stable state)
+            document.getElementById('slider-roll').value = rollDeg;
+            document.getElementById('slider-roll-value').textContent = `${rollDeg}°`;
+
+            document.getElementById('slider-pitch').value = pitchDeg;
+            document.getElementById('slider-pitch-value').textContent = `${pitchDeg}°`;
+
+            document.getElementById('slider-yaw').value = yawDeg;
+            document.getElementById('slider-yaw-value').textContent = `${yawDeg}°`;
+
+            // Render the scene
+            renderer.render(scene, camera);
+        }
+
+        // Initialize and start the animation loop when the window loads
+        window.onload = function() {
+            init();
+            animate();
+        };
+
+    </script>
+</body>
+</html>
